@@ -21,4 +21,4 @@ VOLUME ["/data"]
 EXPOSE 5000
 
 # PORT is respected by platforms that inject it; defaults to 5000 otherwise.
-CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-5000} --workers 2 --timeout 60"]
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-5000} --workers 1 --timeout 60"]
