@@ -10,7 +10,7 @@ class TwoFactorAuthTests(unittest.TestCase):
     def setUp(self):
         self.temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
         self.temp_db.close()
-        auth_module.DATABASE = self.temp_db.name
+        auth_module.configure_database(f"sqlite:///{self.temp_db.name}")
         auth_module.init_db()
         auth_module.app.config.update(TESTING=True, SECRET_KEY="test-secret")
         self.client = auth_module.app.test_client()

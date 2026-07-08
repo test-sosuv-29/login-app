@@ -3,4 +3,6 @@ Werkzeug==3.1.8
 PyOTP==2.10.0
 qrcode==8.2
 Pillow==12.3.0
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
 gunicorn==23.0.0

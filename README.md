@@ -33,12 +33,23 @@ python -m unittest discover -s tests
 
 All configuration is via environment variables:
 
-| Variable      | Default                       | Description                                                        |
-| ------------- | ----------------------------- | ------------------------------------------------------------------ |
-| `SECRET_KEY`  | `dev-insecure-secret-change-me` | **Set this in production.** Signs session cookies.               |
-| `DATABASE`    | `users.db`                    | Path to the SQLite database file.                                  |
-| `PORT`        | `5000`                        | Port to bind. Most PaaS platforms inject this automatically.       |
-| `FLASK_DEBUG` | `1`                           | Only affects `python app.py`. Set to `0` outside local dev.        |
+| Variable       | Default                         | Description                                                                                 |
+| -------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `SECRET_KEY`   | `dev-insecure-secret-change-me` | **Set this in production.** Signs session cookies.                                           |
+| `DATABASE_URL` | _(unset)_                       | SQLAlchemy connection string for Postgres in production. Takes precedence over `DATABASE`.   |
+| `DATABASE`     | `users.db`                      | SQLite file path, used only when `DATABASE_URL` is unset (local dev / tests).                |
+| `PORT`         | `5000`                          | Port to bind. Most PaaS platforms inject this automatically.                                |
+| `FLASK_DEBUG`  | `1`                             | Only affects `python app.py`. Set to `0` outside local dev.                                 |
+
+### Database backend
+
+The app uses SQLAlchemy and runs on either backend with no code change:
+
+- **Local / tests:** SQLite (zero setup) — the default.
+- **Production:** Postgres — set `DATABASE_URL`. Render and Heroku inject this
+  automatically when you attach a managed Postgres. The `postgres://` and
+  `postgresql://` prefixes they use are normalized to the `psycopg` driver
+  automatically, so you can paste the value as-is.
 
 Generate a strong secret key with:
 
@@ -85,9 +96,9 @@ gunicorn app:app --bind 0.0.0.0:5000 --workers 2 --timeout 60
 
 ## Notes
 
-- **Persistence:** the app uses SQLite. On platforms with ephemeral filesystems
-  (e.g. Heroku dynos, some free tiers), the database is wiped on restart. Point
-  `DATABASE` at a persistent volume, or migrate to a managed database, if you
-  need durable accounts.
+- **Persistence:** SQLite (the default) lives on the local filesystem, which is
+  ephemeral on most PaaS platforms — the database is wiped on restart, and it
+  cannot be shared across multiple instances. For durable accounts and horizontal
+  scaling, attach a managed Postgres and set `DATABASE_URL`.
 - Put the app behind HTTPS in production (via the platform's load balancer or a
   reverse proxy) so session cookies and TOTP codes are not sent in cleartext.

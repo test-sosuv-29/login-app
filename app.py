@@ -1,12 +1,25 @@
 import base64
 import os
 import socket
-import sqlite3
 from io import BytesIO
 
 import pyotp
 import qrcode
 from flask import Flask, render_template, request, redirect, url_for, session
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    inspect,
+    insert,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -14,85 +27,131 @@ app = Flask(__name__)
 # The fallback exists only so local development works out of the box.
 app.secret_key = os.environ.get("SECRET_KEY", "dev-insecure-secret-change-me")
 
-DATABASE = os.environ.get("DATABASE", "users.db")
+
+metadata = MetaData()
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("email", String(255), unique=True, nullable=False),
+    Column("password", String(255), nullable=False),
+    Column("two_factor_enabled", Integer, nullable=False, server_default=text("0")),
+    Column("two_factor_secret", String(64)),
+)
+
+
+def _resolve_database_url():
+    """Choose the database from the environment.
+
+    Prefers DATABASE_URL (set automatically by Render/Heroku for managed
+    Postgres). Falls back to a local SQLite file so development and tests work
+    with zero setup. DATABASE keeps backwards compatibility for the SQLite path.
+    """
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return _normalize_database_url(url)
+
+    sqlite_path = os.environ.get("DATABASE", "users.db")
+    return f"sqlite:///{sqlite_path}"
+
+
+def _normalize_database_url(url):
+    """Render/Heroku hand out `postgres://...`, but SQLAlchemy needs an explicit
+    driver. Rewrite to the psycopg (v3) dialect."""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+def _build_engine(url):
+    connect_args = {}
+    if url.startswith("sqlite"):
+        # Flask/gunicorn touch the connection from multiple threads.
+        connect_args["check_same_thread"] = False
+    return create_engine(url, connect_args=connect_args, pool_pre_ping=True, future=True)
+
+
+engine = _build_engine(_resolve_database_url())
+
+
+def configure_database(url):
+    """(Re)point the app at a different database. Used by tests."""
+    global engine
+    engine = _build_engine(_normalize_database_url(url))
+    return engine
 
 
 def init_db():
-    conn = sqlite3.connect(DATABASE)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            two_factor_enabled INTEGER NOT NULL DEFAULT 0,
-            two_factor_secret TEXT
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+    metadata.create_all(engine)
     ensure_user_columns()
 
 
 def ensure_user_columns():
-    conn = sqlite3.connect(DATABASE)
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    """Add the 2FA columns to pre-existing tables that predate them."""
+    existing = {col["name"] for col in inspect(engine).get_columns("users")}
 
-    if "two_factor_enabled" not in columns:
-        conn.execute("ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0")
-
-    if "two_factor_secret" not in columns:
-        conn.execute("ALTER TABLE users ADD COLUMN two_factor_secret TEXT")
-
-    conn.commit()
-    conn.close()
+    with engine.begin() as conn:
+        if "two_factor_enabled" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0"))
+        if "two_factor_secret" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN two_factor_secret VARCHAR(64)"))
 
 
 def create_user(email, password):
     hashed_password = generate_password_hash(password)
     secret = pyotp.random_base32()
 
-    conn = sqlite3.connect(DATABASE)
-    conn.execute(
-        "INSERT INTO users(email, password, two_factor_enabled, two_factor_secret) VALUES(?,?,0,?)",
-        (email, hashed_password, secret),
-    )
-    conn.commit()
-    user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.close()
+    with engine.begin() as conn:
+        result = conn.execute(
+            insert(users).values(
+                email=email,
+                password=hashed_password,
+                two_factor_enabled=0,
+                two_factor_secret=secret,
+            )
+        )
+        user_id = result.inserted_primary_key[0]
 
     return user_id, secret
 
 
+def _fetch_user(where_clause):
+    query = select(
+        users.c.id,
+        users.c.email,
+        users.c.password,
+        users.c.two_factor_enabled,
+        users.c.two_factor_secret,
+    ).where(where_clause)
+
+    with engine.connect() as conn:
+        row = conn.execute(query).first()
+
+    return tuple(row) if row is not None else None
+
+
 def get_user_by_email(email):
-    conn = sqlite3.connect(DATABASE)
-    user = conn.execute(
-        "SELECT id, email, password, two_factor_enabled, two_factor_secret FROM users WHERE email=?",
-        (email,),
-    ).fetchone()
-    conn.close()
-    return user
+    return _fetch_user(users.c.email == email)
 
 
 def get_user_by_id(user_id):
-    conn = sqlite3.connect(DATABASE)
-    user = conn.execute(
-        "SELECT id, email, password, two_factor_enabled, two_factor_secret FROM users WHERE id=?",
-        (user_id,),
-    ).fetchone()
-    conn.close()
-    return user
+    return _fetch_user(users.c.id == user_id)
+
+
+def set_two_factor_secret(user_id, secret):
+    with engine.begin() as conn:
+        conn.execute(update(users).where(users.c.id == user_id).values(two_factor_secret=secret))
 
 
 def update_two_factor_setup(user_id, secret):
-    conn = sqlite3.connect(DATABASE)
-    conn.execute(
-        "UPDATE users SET two_factor_enabled=1, two_factor_secret=? WHERE id=?",
-        (secret, user_id),
-    )
-    conn.commit()
-    conn.close()
+    with engine.begin() as conn:
+        conn.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(two_factor_enabled=1, two_factor_secret=secret)
+        )
 
 
 def build_qr_code(secret, email):
@@ -142,7 +201,7 @@ def register():
             session["pending_2fa_email"] = email
             session["pending_2fa_secret"] = secret
             return redirect(url_for("two_factor_setup"))
-        except sqlite3.IntegrityError:
+        except IntegrityError:
             return render_template("register.html", error="Email already exists")
 
     return render_template("register.html")
@@ -165,10 +224,7 @@ def login():
 
             secret = user[4] or pyotp.random_base32()
             if not user[4]:
-                conn = sqlite3.connect(DATABASE)
-                conn.execute("UPDATE users SET two_factor_secret=? WHERE id=?", (secret, user[0]))
-                conn.commit()
-                conn.close()
+                set_two_factor_secret(user[0], secret)
 
             session["pending_2fa_user_id"] = user[0]
             session["pending_2fa_email"] = user[1]
