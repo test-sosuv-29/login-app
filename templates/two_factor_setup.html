@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Set Up Two-Factor Authentication</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h2>Secure your account</h2>
+    <p>Scan this QR code with Google Authenticator or another TOTP app.</p>
+
+    <img class="qr-code" src="{{ qr_code }}" alt="Two-factor QR code">
+
+    <p class="helper-text">The code refreshes every 30 seconds. Enter the current 6-digit code below.</p>
+
+    <form method="POST">
+        <input type="text" name="code" placeholder="6-digit code" required maxlength="6">
+        <button type="submit">Verify and finish setup</button>
+    </form>
+
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+
+    <div class="secret-box">
+        <strong>Manual secret:</strong> {{ secret }}
+    </div>
+</div>
+
+</body>
+</html>

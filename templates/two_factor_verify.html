@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Verify Two-Factor Code</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h2>Enter your authenticator code</h2>
+    <p class="helper-text">Open your authenticator app and enter the current 6-digit code.</p>
+
+    <form method="POST">
+        <input type="text" name="code" placeholder="6-digit code" required maxlength="6">
+        <button type="submit">Verify</button>
+    </form>
+
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+</div>
+
+</body>
+</html>
