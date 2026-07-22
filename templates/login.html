@@ -8,23 +8,18 @@
 
 <div class="container">
     <h2>Login</h2>
+    <p class="helper-text">Enter your email to continue.</p>
 
-    <form method="POST">
+    <form method="POST" action="/login">
         <input
             type="email"
             name="email"
             placeholder="Email"
+            autofocus
             required
         >
 
-        <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            required
-        >
-
-        <button type="submit">Login</button>
+        <button type="submit">Next</button>
     </form>
 
     {% if error %}

@@ -42,14 +42,41 @@ class TwoFactorAuthTests(unittest.TestCase):
     def test_existing_user_is_prompted_to_setup_two_factor_on_first_login(self):
         auth_module.create_user("existing@example.com", "password123")
 
-        response = self.client.post(
+        # Step 1: email goes to the separate password page.
+        email_response = self.client.post(
             "/login",
-            data={"email": "existing@example.com", "password": "password123"},
+            data={"email": "existing@example.com"},
             follow_redirects=False,
         )
 
+        self.assertEqual(email_response.status_code, 302)
+        self.assertEqual(email_response.headers["Location"], "/login/password")
+
+        # Step 2: password on its own page continues to two-factor setup.
+        password_response = self.client.post(
+            "/login/password",
+            data={"password": "password123"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(password_response.status_code, 302)
+        self.assertEqual(password_response.headers["Location"], "/two-factor/setup")
+
+    def test_password_page_requires_email_step_first(self):
+        response = self.client.get("/login/password", follow_redirects=False)
+
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["Location"], "/two-factor/setup")
+        self.assertEqual(response.headers["Location"], "/login")
+
+    def test_login_with_unknown_email_shows_error(self):
+        response = self.client.post(
+            "/login",
+            data={"email": "nobody@example.com"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No account found with that email", response.data)
 
 
 if __name__ == "__main__":

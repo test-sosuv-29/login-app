@@ -207,33 +207,61 @@ def register():
     return render_template("register.html")
 
 
+def _continue_after_password(user):
+    """Set up the 2FA session for a user who just passed the password check and
+    return the redirect to the appropriate 2FA step."""
+    if user[3] == 1:
+        session["pending_2fa_user_id"] = user[0]
+        session["pending_2fa_email"] = user[1]
+        session["pending_2fa_secret"] = user[4]
+        return redirect(url_for("two_factor_verify"))
+
+    secret = user[4] or pyotp.random_base32()
+    if not user[4]:
+        set_two_factor_secret(user[0], secret)
+
+    session["pending_2fa_user_id"] = user[0]
+    session["pending_2fa_email"] = user[1]
+    session["pending_2fa_secret"] = secret
+    return redirect(url_for("two_factor_setup"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    """Step 1 of login: collect the email, then move to the password page."""
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
 
+        if not email:
+            return render_template("login.html", error="Please enter your email")
+
+        if get_user_by_email(email) is None:
+            return render_template("login.html", error="No account found with that email")
+
+        session["login_email"] = email
+        return redirect(url_for("login_password"))
+
+    return render_template("login.html")
+
+
+@app.route("/login/password", methods=["GET", "POST"])
+def login_password():
+    """Step 2 of login: collect the password for the email chosen in step 1."""
+    email = session.get("login_email")
+    if not email:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
         user = get_user_by_email(email)
 
         if user and check_password_hash(user[2], password):
-            if user[3] == 1:
-                session["pending_2fa_user_id"] = user[0]
-                session["pending_2fa_email"] = user[1]
-                session["pending_2fa_secret"] = user[4]
-                return redirect(url_for("two_factor_verify"))
+            session.pop("login_email", None)
+            return _continue_after_password(user)
 
-            secret = user[4] or pyotp.random_base32()
-            if not user[4]:
-                set_two_factor_secret(user[0], secret)
+        return render_template("login_password.html", email=email, error="😑 Invalid password! Try again?")
 
-            session["pending_2fa_user_id"] = user[0]
-            session["pending_2fa_email"] = user[1]
-            session["pending_2fa_secret"] = secret
-            return redirect(url_for("two_factor_setup"))
-
-        return render_template("login.html", error="Invalid email or password")
-
-    return render_template("login.html")
+    return render_template("login_password.html", email=email)
 
 
 @app.route("/two-factor/setup", methods=["GET", "POST"])
